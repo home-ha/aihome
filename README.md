@@ -1,10 +1,15 @@
-# 备注
-- 请仔细阅读[介绍及使用说明](https://ljr.im/articles/plugin-smart-speaker-access-home-assistant-integration/)
-- 注意检查HA日志插件是否成功启动
-- 使用过程中有疑问请加QQ群307773400交流。
-- 本分支为最新的开发版本，旧版本到[releases页面](https://github.com/cnk700i/aihome/releases)下载
-
+## 备注
+- 插件名称更改为havcs，采用独立文件配置设备信息，不用再重启HA生效。
+- 旧插件（aihome）到[release][1]页面下载。
+- 使用教程[传送门][2]。
 # 更新日志
+- 2019-10-03
+  1. 修复指定device_type没有匹配相应的actions
+  2. 修复叮咚生成设备信息中的话术信息可能导致的错误
+- 2019-09-25
+  1. 重构音箱网关代码，改用独立文件配置设备信息
+  2. 修复取消配置后不能正常清除config entry信息的问题
+  3. 调整设备信息属性havcs_enable为havcs_visable，可以设置该设备只对指定平台可见
 - 2019-09-17
   1. 修复天猫精灵获取变量信息失败导致初始化失败
 - 2019-08-23
@@ -50,7 +55,9 @@
 - 2019-01-xx
   HA 0.86.4 和 HA 0.82.1，本地单机测试
 
-# 调试
-根据[教程][1]查看插件运行日志
+## 调试
+根据[教程][3]调整插件调试级别查看详细的运行日志
 
-[1]: https://ljr.im/articles/home-assistant-novice-question-set/#3-%E8%B0%83%E8%AF%95%E5%8F%8A%E6%9F%A5%E7%9C%8B%E7%A8%8B%E5%BA%8F%E8%BF%90%E8%A1%8C%E6%97%A5%E5%BF%97 "调试及查看程序运行日志"
+[1]: https://github.com/cnk700i/havcs/releases "历史版本"
+[2]: https://ljr.im/articles/plugin-smart-speaker-access-home-assistant-integration-plus/ "【插件】智能音箱接入Home Assistant整合Plus"
+[3]: https://ljr.im/articles/home-assistant-novice-question-set/#3-%E8%B0%83%E8%AF%95%E5%8F%8A%E6%9F%A5%E7%9C%8B%E7%A8%8B%E5%BA%8F%E8%BF%90%E8%A1%8C%E6%97%A5%E5%BF%97 "调试及查看程序运行日志"
