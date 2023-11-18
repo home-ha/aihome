@@ -1,22 +1,39 @@
 import json
-import logging
-import uuid
-import copy
-import time
 from urllib.request import urlopen
-from .util import decrypt_device_id, encrypt_entity_id
+import logging
+
+import async_timeout
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from .util import decrypt_device_id, encrypt_device_id
 from .helper import VoiceControlProcessor, VoiceControlDeviceManager
+from .const import ATTR_DEVICE_ACTIONS
 
 _LOGGER = logging.getLogger(__name__)
 # _LOGGER.setLevel(logging.DEBUG)
 LOGGER_NAME = 'aligenie'
 
-AI_HOME = True
 DOMAIN = 'aligenie'
 
-def createHandler(hass):
+async def createHandler(hass, entry):
     mode = ['handler']
-    return VoiceControlAligenie(hass, mode)
+    try:
+        placelist_url = 'https://open.bot.tmall.com/oauth/api/placelist'
+        aliaslist_url = 'https://open.bot.tmall.com/oauth/api/aliaslist'
+        session = async_get_clientsession(hass, verify_ssl=False)
+        with async_timeout.timeout(5, loop=hass.loop):
+            response = await session.get(placelist_url)
+        placelist  = (await response.json())['data']
+        with async_timeout.timeout(5, loop=hass.loop):
+            response = await session.get(aliaslist_url)
+        aliaslist = (await response.json())['data']
+        placelist.append({'key': '电视', 'value': ['电视机']})
+        aliaslist.append({'key': '传感器', 'value': ['传感器']})
+    except:
+        placelist = []
+        aliaslist = []
+        import traceback
+        _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
+    return VoiceControlAligenie(hass, mode, entry, placelist, aliaslist)
 
 class PlatformParameter:
     device_attribute_map_h2p = {
@@ -41,10 +58,13 @@ class PlatformParameter:
         'set_temperature': 'SetTemperature',
         'set_color': 'SetColor',
         'pause': 'Pause',
+        'continue': 'Continue',
+        'play': 'Play',
         'query_color': 'QueryColor',
         'query_power_state': 'QueryPowerState',
         'query_temperature': 'QueryTemperature',
         'query_humidity': 'QueryHumidity',
+        'set_mode': 'SetMode'
         # '': 'QueryWindSpeed',
         # '': 'QueryBrightness',
         # '': 'QueryFog',
@@ -67,7 +87,9 @@ class PlatformParameter:
         'bottlewarmer': '暖奶器',
         'soymilkmaker': '豆浆机',
         'kettle': '电热水壶',
-        'watercooler': '饮水机',
+        'waterdispenser': '饮水机',
+        'camera': '摄像头',
+        'router': '路由器',
         'cooker': '电饭煲',
         'waterheater': '热水器',
         'oven': '烤箱',
@@ -84,6 +106,17 @@ class PlatformParameter:
         'telecontroller': '万能遥控器',
         'dishwasher': '洗碗机',
         'dehumidifier': '除湿机',
+        'dryer': '干衣机',
+        'wall-hung-boiler': '壁挂炉',
+        'microwaveoven': '微波炉',
+        'heater': '取暖器',
+        'mosquitoDispeller': '驱蚊器',
+        'treadmill': '跑步机',
+        'smart-gating': '智能门控',
+        'smart-band': '智能手环',
+        'hanger': '晾衣架',
+        'bloodPressureMeter': '血压仪',
+        'bloodGlucoseMeter': '血糖仪',
     }
 
     device_type_map_h2p = {
@@ -99,6 +132,16 @@ class PlatformParameter:
         }
 
     _service_map_p2h = {
+        # 测试，暂无找到播放指定音乐话术，继续播放指令都是Play
+        # 'media_player': {
+        #     'Play': lambda state, attributes, payload: (['play_media'], ['play_media'], [{"media_content_id": payload['value'], "media_content_type": "playlist"}]),
+        #     'Pause': 'media_pause',
+        #     'Continue': 'media_play'
+        # },
+        # 模式和平台设备类型有关，自动模式 静音模式 睡眠风模式（fan类型） 睡眠模式（airpurifier类型）
+        'fan': {
+            'SetMode': lambda state, attributes, payload: (['fan'], ['set_speed'], [{"speed": payload['value']}])
+        },
         'cover': {
             'TurnOn':  'open_cover',
             'TurnOff': 'close_cover',
@@ -116,11 +159,11 @@ class PlatformParameter:
             'AdjustDownBrightness': lambda state, attributes, payload: (['light'], ['turn_on'], [{'brightness_pct': max(attributes['brightness_pct'] - payload['value'], 0)}]),
             'SetColor':             lambda state, attributes, payload: (['light'], ['turn_on'], [{"color_name": payload['value']}])
         },
-        'input_boolean':{
-            'TurnOn': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes['havcs_actions']['turn_on']], [cmnd[1] for cmnd in attributes['havcs_actions']['turn_on']], [json.loads(cmnd[2]) for cmnd in attributes['havcs_actions']['turn_on']]) if attributes.get('havcs_actions') else (['input_boolean'], ['turn_on'], [{}]),
-            'TurnOff': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes['havcs_actions']['turn_off']], [cmnd[1] for cmnd in attributes['havcs_actions']['turn_off']], [json.loads(cmnd[2]) for cmnd in attributes['havcs_actions']['turn_off']]) if attributes.get('havcs_actions') else (['input_boolean'], ['turn_off'], [{}]),
-            'AdjustUpBrightness': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes['havcs_actions']['increase_brightness']], [cmnd[1] for cmnd in attributes['havcs_actions']['increase_brightness']], [json.loads(cmnd[2]) for cmnd in attributes['havcs_actions']['increase_brightness']]) if attributes.get('havcs_actions') else (['input_boolean'], ['turn_on'], [{}]),
-            'AdjustDownBrightness': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes['havcs_actions']['decrease_brightness']], [cmnd[1] for cmnd in attributes['havcs_actions']['decrease_brightness']], [json.loads(cmnd[2]) for cmnd in attributes['havcs_actions']['decrease_brightness']]) if attributes.get('havcs_actions') else (['input_boolean'], ['turn_on'], [{}]),
+        'havcs':{
+            'TurnOn': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_on']], [cmnd[1] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_on']], [json.loads(cmnd[2]) for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_on']]) if attributes.get(ATTR_DEVICE_ACTIONS) else (['input_boolean'], ['turn_on'], [{}]),
+            'TurnOff': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_off']], [cmnd[1] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_off']], [json.loads(cmnd[2]) for cmnd in attributes[ATTR_DEVICE_ACTIONS]['turn_off']]) if attributes.get(ATTR_DEVICE_ACTIONS) else (['input_boolean'], ['turn_off'], [{}]),
+            'AdjustUpBrightness': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['increase_brightness']], [cmnd[1] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['increase_brightness']], [json.loads(cmnd[2]) for cmnd in attributes[ATTR_DEVICE_ACTIONS]['increase_brightness']]) if attributes.get(ATTR_DEVICE_ACTIONS) else (['input_boolean'], ['turn_on'], [{}]),
+            'AdjustDownBrightness': lambda state, attributes, payload:([cmnd[0] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['decrease_brightness']], [cmnd[1] for cmnd in attributes[ATTR_DEVICE_ACTIONS]['decrease_brightness']], [json.loads(cmnd[2]) for cmnd in attributes[ATTR_DEVICE_ACTIONS]['decrease_brightness']]) if attributes.get(ATTR_DEVICE_ACTIONS) else (['input_boolean'], ['turn_on'], [{}]),
         }
 
     }
@@ -130,20 +173,22 @@ class PlatformParameter:
     }
 
 class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
-    def __init__(self, hass, mode):
+    def __init__(self, hass, mode, entry, zone_constraints, device_name_constraints):
         self._hass = hass
         self._mode = mode
-        try:
-            self._zone_constraints  = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/placelist').read().decode('utf-8'))['data']
-            self._device_name_constraints = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/aliaslist').read().decode('utf-8'))['data']
-            self._device_name_constraints.append({'key': '电视', 'value': ['电视机']})
-            self._device_name_constraints.append({'key': '传感器', 'value': ['传感器']})
-        except:
-            self._zone_constraints = []
-            self._device_name_constraints = []
-            import traceback
-            _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
-        self.vcdm = VoiceControlDeviceManager(DOMAIN, self.device_action_map_h2p, self.device_attribute_map_h2p, self._service_map_p2h, self.device_type_map_h2p, self._device_type_alias, self._device_name_constraints, self._zone_constraints)
+        self._zone_constraints = zone_constraints
+        self._device_name_constraints = device_name_constraints
+        # try:
+        #     self._zone_constraints  = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/placelist').read().decode('utf-8'))['data']
+        #     self._device_name_constraints = json.loads(urlopen('https://open.bot.tmall.com/oauth/api/aliaslist').read().decode('utf-8'))['data']
+        #     self._device_name_constraints.append({'key': '电视', 'value': ['电视机']})
+        #     self._device_name_constraints.append({'key': '传感器', 'value': ['传感器']})
+        # except:
+        #     self._zone_constraints = []
+        #     self._device_name_constraints = []
+        #     import traceback
+        #     _LOGGER.info("[%s] can get places and aliases data from website, set None.\n%s", LOGGER_NAME, traceback.format_exc())
+        self.vcdm = VoiceControlDeviceManager(entry, DOMAIN, self.device_action_map_h2p, self.device_attribute_map_h2p, self._service_map_p2h, self.device_type_map_h2p, self._device_type_alias, self._device_name_constraints, self._zone_constraints)
 
     def _errorResult(self, errorCode, messsage=None):
         """Generate error result"""
@@ -158,7 +203,7 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         }
         return {'errorCode': errorCode, 'message': messsage if messsage else messages[errorCode]}
 
-    async def handleRequest(self, data, auth = False):
+    async def handleRequest(self, data, auth = False, request_from = "http"):
         """Handle request"""
         _LOGGER.info("[%s] Handle Request:\n%s", LOGGER_NAME, data)
 
@@ -171,7 +216,7 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
 
         if auth:
             if namespace == 'AliGenie.Iot.Device.Discovery':
-                err_result, discovery_devices, entity_ids = self.process_discovery_command()
+                err_result, discovery_devices, entity_ids = self.process_discovery_command(request_from)
                 content = {'devices': discovery_devices}
             elif namespace == 'AliGenie.Iot.Device.Control':
                 err_result, content = await self.process_control_command(data)
@@ -186,7 +231,11 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
             err_result = self._errorResult('ACCESS_TOKEN_INVALIDATE')
 
         # Check error and fill response name
-        header['name'] = ('Error' if err_result else action) + 'Response'
+        if err_result:
+            header['name'] = 'ErrorResponse'
+            content = err_result
+        else:
+            header['name'] = action + 'Response'
 
         # Fill response deviceId
         if 'deviceId' in payload:
@@ -218,9 +267,10 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         for device_property in device_properties:
             name = self.device_attribute_map_h2p.get(device_property.get('attribute'))
             state = self._hass.states.get(device_property.get('entity_id'))
-            if name and state:
-                properties += [{'name': name.lower(), 'value': state.state}]
-        return properties if properties else None
+            if name:
+                value = state.state if state else 'unavailable'
+                properties += [{'name': name.lower(), 'value': value}]
+        return properties if properties else [{'name': 'powerstate', 'value': 'off'}]
     
     def _discovery_process_actions(self, device_properties, raw_actions):
         actions = []
@@ -237,11 +287,12 @@ class VoiceControlAligenie(PlatformParameter, VoiceControlProcessor):
         return list(set(actions))
 
     def _discovery_process_device_type(self, raw_device_type):
-        return raw_device_type
+        # raw_device_type guess from device_id's domain transfer to platform style
+        return raw_device_type if raw_device_type in self._device_type_alias else self.device_type_map_h2p.get(raw_device_type)
 
-    def _discovery_process_device_info(self, entity_id,  device_type, device_name, zone, properties, actions):
+    def _discovery_process_device_info(self, device_id,  device_type, device_name, zone, properties, actions):
         return {
-            'deviceId': encrypt_entity_id(entity_id),
+            'deviceId': encrypt_device_id(device_id),
             'deviceName': device_name,
             'deviceType': device_type,
             'zone': zone,

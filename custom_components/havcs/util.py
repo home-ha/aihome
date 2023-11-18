@@ -1,46 +1,18 @@
 from Crypto.Cipher import AES
-from base64 import b64decode
-from base64 import b64encode
+from base64 import b64decode, b64encode
 import homeassistant.util.color as color_util
 import time
-import logging
 import re
 import jwt
 from typing import cast
-
+import logging
 
 _LOGGER = logging.getLogger(__name__)
 # _LOGGER.setLevel(logging.DEBUG)
 LOGGER_NAME = 'util'
 
-
-AIHOME_ACTIONS_ALIAS = {
-    'jdwhale':{
-        'turn_on': 'TurnOn',
-        'turn_off': 'TurnOff',
-        'increase_brightness': 'AdjustUpBrightness',
-        'decrease_brightness': 'AdjustDownBrightness'
-    },
-    'aligenie':{
-        'turn_on': 'turnOn',
-        'turn_off': 'turnOff',
-        'increase_brightness': 'incrementBrightnessPercentage',
-        'decrease_brightness': 'decrementBrightnessPercentage'
-    },
-    'dueros':{
-        'turn_on': 'turnOn',
-        'turn_off': 'turnOff',
-        'increase_brightness': 'AdjustUpBrightness',
-        'decrease_brightness': 'AdjustDownBrightness',
-        'timing_turn_on': 'timingTurnOn',
-        'timing_turn_off': 'timingTurnOff'
-    }
-}
-
-bindManager = None
 ENTITY_KEY = ''
-CONTEXT_AIHOME = None
-EXPIRATION = {}
+
 class AESCipher:
     """
     Tested under Python 3.x and PyCrypto 2.6.1.
@@ -70,22 +42,28 @@ class AESCipher:
         return unpad(cipher.decrypt(enc)).decode('utf8')
 
 def decrypt_device_id(device_id):
+    try:
+        if not ENTITY_KEY:
+            new_device_id = device_id
+        else:
+            device_id = device_id.replace('-', '+')
+            device_id = device_id.replace('_', '/')
+            pad4 = '===='
+            device_id += pad4[0:len(device_id) % 4]
+            new_device_id = AESCipher(ENTITY_KEY.encode('utf-8')).decrypt(device_id)
+    except:
+        new_device_id = None
+    finally:
+        return new_device_id
+def encrypt_device_id(device_id):
     if not ENTITY_KEY:
-        return device_id
-    device_id = device_id.replace('-', '+')
-    device_id = device_id.replace('_', '/')
-    pad4 = '===='
-    device_id += pad4[0:len(device_id) % 4]
-    entity_id = AESCipher(ENTITY_KEY.encode('utf-8')).decrypt(device_id)
-    return entity_id
-def encrypt_entity_id(entity_id):
-    if not ENTITY_KEY:
-        return entity_id
-    device_id = AESCipher(ENTITY_KEY.encode('utf-8')).encrypt(entity_id.encode('utf8'))
-    device_id = device_id.replace('+', '-')
-    device_id = device_id.replace('/', '_')
-    device_id = device_id.replace('=', '')
-    return device_id
+        new_device_id = device_id
+    else:
+        new_device_id = AESCipher(ENTITY_KEY.encode('utf-8')).encrypt(device_id.encode('utf8'))
+        new_device_id = new_device_id.replace('+', '-')
+        new_device_id = new_device_id.replace('/', '_')
+        new_device_id = new_device_id.replace('=', '')
+    return new_device_id
 
 def hsv2rgb(hsvColorDic):
 
@@ -121,10 +99,10 @@ async def async_update_token_expiration(access_token, hass, expiration):
         refresh_token = await hass.auth.async_get_refresh_token(cast(str, unverif_claims.get('iss')))
         for user in hass.auth._store._users.values():
             if refresh_token.id in user.refresh_tokens and refresh_token.access_token_expiration != expiration:
-                _LOGGER.debug('[util] set new expiration for refresh_token[%s]', refresh_token.id)
+                _LOGGER.debug("[util] set new access token expiration for refresh_token[%s]", refresh_token.id)
                 refresh_token.access_token_expiration = expiration
                 user.refresh_tokens[refresh_token.id] = refresh_token
                 hass.auth._store._async_schedule_save()
                 break
     except jwt.InvalidTokenError:
-        _LOGGER.debug('[util] access_token[%s] is invalid, try another reauthorization on website.', access_token)
+        _LOGGER.debug("[util] access_token[%s] is invalid, try another reauthorization on website", access_token)
